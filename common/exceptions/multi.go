@@ -37,13 +37,10 @@ func Errors(errors ...error) error {
 }
 
 func Expand(err error) []error {
-	if err == nil {
-		return nil
-	} else if multiErr, isMultiErr := err.(MultiError); isMultiErr {
-		return ExpandAll(common.FilterNotNil(multiErr.Unwrap()))
-	} else {
-		return []error{err}
+	if multiErr, isMultiErr := err.(MultiError); isMultiErr {
+		return ExpandAll(multiErr.Unwrap())
 	}
+	return []error{err}
 }
 
 func ExpandAll(errs []error) []error {

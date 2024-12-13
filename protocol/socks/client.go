@@ -147,9 +147,8 @@ func (c *Client) DialContext(ctx context.Context, network string, address M.Sock
 			tcpConn.Close()
 			return nil, err
 		}
-		return NewAssociatePacketConn(udpConn, address, tcpConn), nil
+		return NewAssociateConn(udpConn, address, tcpConn), nil
 	}
-	_ = tcpConn.Close()
 	return nil, os.ErrInvalid
 }
 
@@ -182,6 +181,5 @@ func (c *Client) BindContext(ctx context.Context, address M.Socksaddr) (net.Conn
 		}
 		return tcpConn, nil
 	}
-	_ = tcpConn.Close()
 	return nil, os.ErrInvalid
 }

@@ -13,26 +13,20 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/common/pipe"
 )
 
-// Deprecated: Use N.UDPConnectionHandler instead.
-//
-//nolint:staticcheck
 type Handler interface {
 	N.UDPConnectionHandler
 	E.Handler
 }
 
 type Service[K comparable] struct {
-	nat       *cache.LruCache[K, *conn]
-	handler   Handler
-	handlerEx N.UDPConnectionHandlerEx
+	nat     *cache.LruCache[K, *conn]
+	handler Handler
 }
 
-// Deprecated: Use NewEx instead.
 func New[K comparable](maxAge int64, handler Handler) *Service[K] {
-	service := &Service[K]{
+	return &Service[K]{
 		nat: cache.New(
 			cache.WithAge[K, *conn](maxAge),
 			cache.WithUpdateAgeOnGet[K, *conn](),
@@ -42,27 +36,11 @@ func New[K comparable](maxAge int64, handler Handler) *Service[K] {
 		),
 		handler: handler,
 	}
-	return service
-}
-
-func NewEx[K comparable](maxAge int64, handler N.UDPConnectionHandlerEx) *Service[K] {
-	service := &Service[K]{
-		nat: cache.New(
-			cache.WithAge[K, *conn](maxAge),
-			cache.WithUpdateAgeOnGet[K, *conn](),
-			cache.WithEvict[K, *conn](func(key K, conn *conn) {
-				conn.Close()
-			}),
-		),
-		handlerEx: handler,
-	}
-	return service
 }
 
 func (s *Service[T]) WriteIsThreadUnsafe() {
 }
 
-// Deprecated: don't use
 func (s *Service[T]) NewPacketDirect(ctx context.Context, key T, conn N.PacketConn, buffer *buf.Buffer, metadata M.Metadata) {
 	s.NewContextPacket(ctx, key, buffer, metadata, func(natConn N.PacketConn) (context.Context, N.PacketWriter) {
 		return ctx, &DirectBackWriter{conn, natConn}
@@ -82,31 +60,18 @@ func (w *DirectBackWriter) Upstream() any {
 	return w.Source
 }
 
-// Deprecated: use NewPacketEx instead.
 func (s *Service[T]) NewPacket(ctx context.Context, key T, buffer *buf.Buffer, metadata M.Metadata, init func(natConn N.PacketConn) N.PacketWriter) {
 	s.NewContextPacket(ctx, key, buffer, metadata, func(natConn N.PacketConn) (context.Context, N.PacketWriter) {
 		return ctx, init(natConn)
 	})
 }
 
-func (s *Service[T]) NewPacketEx(ctx context.Context, key T, buffer *buf.Buffer, source M.Socksaddr, destination M.Socksaddr, init func(natConn N.PacketConn) N.PacketWriter) {
-	s.NewContextPacketEx(ctx, key, buffer, source, destination, func(natConn N.PacketConn) (context.Context, N.PacketWriter) {
-		return ctx, init(natConn)
-	})
-}
-
-// Deprecated: Use NewPacketConnectionEx instead.
 func (s *Service[T]) NewContextPacket(ctx context.Context, key T, buffer *buf.Buffer, metadata M.Metadata, init func(natConn N.PacketConn) (context.Context, N.PacketWriter)) {
-	s.NewContextPacketEx(ctx, key, buffer, metadata.Source, metadata.Destination, init)
-}
-
-func (s *Service[T]) NewContextPacketEx(ctx context.Context, key T, buffer *buf.Buffer, source M.Socksaddr, destination M.Socksaddr, init func(natConn N.PacketConn) (context.Context, N.PacketWriter)) {
 	c, loaded := s.nat.LoadOrStore(key, func() *conn {
 		c := &conn{
-			data:         make(chan packet, 64),
-			localAddr:    source,
-			remoteAddr:   destination,
-			readDeadline: pipe.MakeDeadline(),
+			data:       make(chan packet, 64),
+			localAddr:  metadata.Source,
+			remoteAddr: metadata.Destination,
 		}
 		c.ctx, c.cancel = common.ContextWithCancelCause(ctx)
 		return c
@@ -114,34 +79,26 @@ func (s *Service[T]) NewContextPacketEx(ctx context.Context, key T, buffer *buf.
 	if !loaded {
 		ctx, c.source = init(c)
 		go func() {
-			if s.handlerEx != nil {
-				s.handlerEx.NewPacketConnectionEx(ctx, c, source, destination, func(err error) {
-					s.nat.Delete(key)
-				})
-			} else {
-				//nolint:staticcheck
-				err := s.handler.NewPacketConnection(ctx, c, M.Metadata{
-					Source:      source,
-					Destination: destination,
-				})
-				if err != nil {
-					s.handler.NewError(ctx, err)
-				}
-				c.Close()
-				s.nat.Delete(key)
+			err := s.handler.NewPacketConnection(ctx, c, metadata)
+			if err != nil {
+				s.handler.NewError(ctx, err)
 			}
+			c.Close()
+			s.nat.Delete(key)
 		}()
+	} else {
+		c.localAddr = metadata.Source
 	}
 	if common.Done(c.ctx) {
 		s.nat.Delete(key)
 		if !common.Done(ctx) {
-			s.NewContextPacketEx(ctx, key, buffer, source, destination, init)
+			s.NewContextPacket(ctx, key, buffer, metadata, init)
 		}
 		return
 	}
 	c.data <- packet{
 		data:        buffer,
-		destination: destination,
+		destination: metadata.Destination,
 	}
 }
 
@@ -150,17 +107,22 @@ type packet struct {
 	destination M.Socksaddr
 }
 
-var _ N.PacketConn = (*conn)(nil)
-
 type conn struct {
-	ctx             context.Context
-	cancel          common.ContextCancelCauseFunc
-	data            chan packet
-	localAddr       M.Socksaddr
-	remoteAddr      M.Socksaddr
-	source          N.PacketWriter
-	readDeadline    pipe.Deadline
-	readWaitOptions N.ReadWaitOptions
+	ctx        context.Context
+	cancel     common.ContextCancelCauseFunc
+	data       chan packet
+	localAddr  M.Socksaddr
+	remoteAddr M.Socksaddr
+	source     N.PacketWriter
+}
+
+func (c *conn) ReadPacketThreadSafe() (buffer *buf.Buffer, addr M.Socksaddr, err error) {
+	select {
+	case p := <-c.data:
+		return p.data, p.destination, nil
+	case <-c.ctx.Done():
+		return nil, M.Socksaddr{}, io.ErrClosedPipe
+	}
 }
 
 func (c *conn) ReadPacket(buffer *buf.Buffer) (addr M.Socksaddr, err error) {
@@ -171,13 +133,38 @@ func (c *conn) ReadPacket(buffer *buf.Buffer) (addr M.Socksaddr, err error) {
 		return p.destination, err
 	case <-c.ctx.Done():
 		return M.Socksaddr{}, io.ErrClosedPipe
-	case <-c.readDeadline.Wait():
-		return M.Socksaddr{}, os.ErrDeadlineExceeded
+	}
+}
+
+func (c *conn) WaitReadPacket(newBuffer func() *buf.Buffer) (destination M.Socksaddr, err error) {
+	select {
+	case p := <-c.data:
+		_, err = newBuffer().ReadOnceFrom(p.data)
+		p.data.Release()
+		return p.destination, err
+	case <-c.ctx.Done():
+		return M.Socksaddr{}, io.ErrClosedPipe
 	}
 }
 
 func (c *conn) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
 	return c.source.WritePacket(buffer, destination)
+}
+
+func (c *conn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	select {
+	case pkt := <-c.data:
+		n = copy(p, pkt.data.Bytes())
+		pkt.data.Release()
+		addr = pkt.destination.UDPAddr()
+		return n, addr, nil
+	case <-c.ctx.Done():
+		return 0, nil, io.ErrClosedPipe
+	}
+}
+
+func (c *conn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	return len(p), c.source.WritePacket(buf.As(p).ToOwned(), M.SocksaddrFromNet(addr))
 }
 
 func (c *conn) Close() error {
@@ -205,12 +192,15 @@ func (c *conn) SetDeadline(t time.Time) error {
 }
 
 func (c *conn) SetReadDeadline(t time.Time) error {
-	c.readDeadline.Set(t)
-	return nil
+	return os.ErrInvalid
 }
 
 func (c *conn) SetWriteDeadline(t time.Time) error {
 	return os.ErrInvalid
+}
+
+func (c *conn) NeedAdditionalReadDeadline() bool {
+	return true
 }
 
 func (c *conn) Upstream() any {

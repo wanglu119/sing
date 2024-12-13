@@ -5,7 +5,6 @@ import (
 	"reflect"
 )
 
-// Deprecated: not used
 func SelectContext(contextList []context.Context) (int, error) {
 	if len(contextList) == 1 {
 		<-contextList[0].Done()

@@ -44,7 +44,7 @@ func (m *defaultManager) BasePath(name string) string {
 
 func (m *defaultManager) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
 	name = m.BasePath(name)
-	willCreate := flag&os.O_CREATE != 0 && !rw.IsFile(name)
+	willCreate := flag&os.O_CREATE != 0 && !rw.FileExists(name)
 	file, err := os.OpenFile(name, flag, perm)
 	if err != nil {
 		return nil, err
@@ -93,13 +93,6 @@ func (m *defaultManager) CreateTemp(pattern string) (*os.File, error) {
 	return file, nil
 }
 
-func (m *defaultManager) Chown(path string) error {
-	if m.chown {
-		return os.Chown(path, m.userID, m.groupID)
-	}
-	return nil
-}
-
 func (m *defaultManager) Mkdir(path string, perm os.FileMode) error {
 	path = m.BasePath(path)
 	err := os.Mkdir(path, perm)
@@ -118,10 +111,6 @@ func (m *defaultManager) Mkdir(path string, perm os.FileMode) error {
 
 func (m *defaultManager) MkdirAll(path string, perm os.FileMode) error {
 	path = m.BasePath(path)
-	return m.mkdirAll(path, perm)
-}
-
-func (m *defaultManager) mkdirAll(path string, perm os.FileMode) error {
 	dir, err := os.Stat(path)
 	if err == nil {
 		if dir.IsDir() {

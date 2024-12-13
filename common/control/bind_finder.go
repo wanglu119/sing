@@ -1,59 +1,30 @@
 package control
 
-import (
-	"net"
-	"net/netip"
-	"unsafe"
-
-	"github.com/sagernet/sing/common"
-	M "github.com/sagernet/sing/common/metadata"
-)
+import "net"
 
 type InterfaceFinder interface {
-	Update() error
-	Interfaces() []Interface
-	ByName(name string) (*Interface, error)
-	ByIndex(index int) (*Interface, error)
-	ByAddr(addr netip.Addr) (*Interface, error)
+	InterfaceIndexByName(name string) (int, error)
+	InterfaceNameByIndex(index int) (string, error)
 }
 
-type Interface struct {
-	Index        int
-	MTU          int
-	Name         string
-	HardwareAddr net.HardwareAddr
-	Flags        net.Flags
-	Addresses    []netip.Prefix
+func DefaultInterfaceFinder() InterfaceFinder {
+	return (*netInterfaceFinder)(nil)
 }
 
-func (i Interface) Equals(other Interface) bool {
-	return i.Index == other.Index &&
-		i.MTU == other.MTU &&
-		i.Name == other.Name &&
-		common.Equal(i.HardwareAddr, other.HardwareAddr) &&
-		i.Flags == other.Flags &&
-		common.Equal(i.Addresses, other.Addresses)
-}
+type netInterfaceFinder struct{}
 
-func (i Interface) NetInterface() net.Interface {
-	return *(*net.Interface)(unsafe.Pointer(&i))
-}
-
-func InterfaceFromNet(iif net.Interface) (Interface, error) {
-	ifAddrs, err := iif.Addrs()
+func (w *netInterfaceFinder) InterfaceIndexByName(name string) (int, error) {
+	netInterface, err := net.InterfaceByName(name)
 	if err != nil {
-		return Interface{}, err
+		return 0, err
 	}
-	return InterfaceFromNetAddrs(iif, common.Map(ifAddrs, M.PrefixFromNet)), nil
+	return netInterface.Index, nil
 }
 
-func InterfaceFromNetAddrs(iif net.Interface, addresses []netip.Prefix) Interface {
-	return Interface{
-		Index:        iif.Index,
-		MTU:          iif.MTU,
-		Name:         iif.Name,
-		HardwareAddr: iif.HardwareAddr,
-		Flags:        iif.Flags,
-		Addresses:    addresses,
+func (w *netInterfaceFinder) InterfaceNameByIndex(index int) (string, error) {
+	netInterface, err := net.InterfaceByIndex(index)
+	if err != nil {
+		return "", err
 	}
+	return netInterface.Name, nil
 }

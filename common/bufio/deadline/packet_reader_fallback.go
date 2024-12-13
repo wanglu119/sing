@@ -2,7 +2,6 @@ package deadline
 
 import (
 	"net"
-	"os"
 	"time"
 
 	"github.com/sagernet/sing/common/atomic"
@@ -26,15 +25,12 @@ func (r *fallbackPacketReader) ReadFrom(p []byte) (n int, addr net.Addr, err err
 		return r.pipeReturnFrom(result, p)
 	default:
 	}
+	if r.disablePipe.Load() {
+		return r.TimeoutPacketReader.ReadFrom(p)
+	}
 	select {
-	case result := <-r.result:
-		return r.pipeReturnFrom(result, p)
-	case <-r.pipeDeadline.wait():
-		return 0, nil, os.ErrDeadlineExceeded
 	case <-r.done:
-		if r.disablePipe.Load() {
-			return r.TimeoutPacketReader.ReadFrom(p)
-		} else if r.deadline.Load().IsZero() {
+		if r.deadline.Load().IsZero() {
 			r.done <- struct{}{}
 			r.inRead.Store(true)
 			defer r.inRead.Store(false)
@@ -42,13 +38,9 @@ func (r *fallbackPacketReader) ReadFrom(p []byte) (n int, addr net.Addr, err err
 			return
 		}
 		go r.pipeReadFrom(len(p))
+	default:
 	}
-	select {
-	case result := <-r.result:
-		return r.pipeReturnFrom(result, p)
-	case <-r.pipeDeadline.wait():
-		return 0, nil, os.ErrDeadlineExceeded
-	}
+	return r.readFrom(p)
 }
 
 func (r *fallbackPacketReader) ReadPacket(buffer *buf.Buffer) (destination M.Socksaddr, err error) {
@@ -57,29 +49,22 @@ func (r *fallbackPacketReader) ReadPacket(buffer *buf.Buffer) (destination M.Soc
 		return r.pipeReturnFromBuffer(result, buffer)
 	default:
 	}
+	if r.disablePipe.Load() {
+		return r.TimeoutPacketReader.ReadPacket(buffer)
+	}
 	select {
-	case result := <-r.result:
-		return r.pipeReturnFromBuffer(result, buffer)
-	case <-r.pipeDeadline.wait():
-		return M.Socksaddr{}, os.ErrDeadlineExceeded
 	case <-r.done:
-		if r.disablePipe.Load() {
-			return r.TimeoutPacketReader.ReadPacket(buffer)
-		} else if r.deadline.Load().IsZero() {
+		if r.deadline.Load().IsZero() {
 			r.done <- struct{}{}
 			r.inRead.Store(true)
 			defer r.inRead.Store(false)
 			destination, err = r.TimeoutPacketReader.ReadPacket(buffer)
 			return
 		}
-		go r.pipeReadFrom(buffer.FreeLen())
+		go r.pipeReadFromBuffer(buffer.FreeLen())
+	default:
 	}
-	select {
-	case result := <-r.result:
-		return r.pipeReturnFromBuffer(result, buffer)
-	case <-r.pipeDeadline.wait():
-		return M.Socksaddr{}, os.ErrDeadlineExceeded
-	}
+	return r.readPacket(buffer)
 }
 
 func (r *fallbackPacketReader) SetReadDeadline(t time.Time) error {

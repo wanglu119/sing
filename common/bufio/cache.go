@@ -3,6 +3,7 @@ package bufio
 import (
 	"io"
 	"net"
+	"time"
 
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
@@ -57,6 +58,13 @@ func (c *CachedConn) WriteTo(w io.Writer) (n int64, err error) {
 	cn, err := Copy(w, c.Conn)
 	n += cn
 	return
+}
+
+func (c *CachedConn) SetReadDeadline(t time.Time) error {
+	if c.buffer != nil && !c.buffer.IsEmpty() {
+		return nil
+	}
+	return c.Conn.SetReadDeadline(t)
 }
 
 func (c *CachedConn) ReadFrom(r io.Reader) (n int64, err error) {
@@ -184,12 +192,10 @@ func (c *CachedPacketConn) ReadCachedPacket() *N.PacketBuffer {
 	if buffer != nil {
 		buffer.DecRef()
 	}
-	packet := N.NewPacketBuffer()
-	*packet = N.PacketBuffer{
+	return &N.PacketBuffer{
 		Buffer:      buffer,
 		Destination: c.destination,
 	}
-	return packet
 }
 
 func (c *CachedPacketConn) Upstream() any {

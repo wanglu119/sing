@@ -15,7 +15,6 @@ func SourceAddress(request *http.Request) M.Socksaddr {
 			originAddr := M.ParseAddr(from)
 			if originAddr.IsValid() {
 				address.Addr = originAddr
-				break
 			}
 		}
 	}

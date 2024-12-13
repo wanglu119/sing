@@ -2,6 +2,6 @@
 
 package control
 
-func RoutingMark(mark uint32) Func {
+func RoutingMark(mark int) Func {
 	return nil
 }

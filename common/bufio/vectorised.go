@@ -33,10 +33,10 @@ func CreateVectorisedWriter(writer any) (N.VectorisedWriter, bool) {
 	case syscall.Conn:
 		rawConn, err := w.SyscallConn()
 		if err == nil {
-			return &SyscallVectorisedWriter{upstream: writer, rawConn: rawConn}, true
+			return &SyscallVectorisedWriter{writer, rawConn}, true
 		}
 	case syscall.RawConn:
-		return &SyscallVectorisedWriter{upstream: writer, rawConn: w}, true
+		return &SyscallVectorisedWriter{writer, w}, true
 	}
 	return nil, false
 }
@@ -48,10 +48,10 @@ func CreateVectorisedPacketWriter(writer any) (N.VectorisedPacketWriter, bool) {
 	case syscall.Conn:
 		rawConn, err := w.SyscallConn()
 		if err == nil {
-			return &SyscallVectorisedPacketWriter{upstream: writer, rawConn: rawConn}, true
+			return &SyscallVectorisedPacketWriter{writer, rawConn}, true
 		}
 	case syscall.RawConn:
-		return &SyscallVectorisedPacketWriter{upstream: writer, rawConn: w}, true
+		return &SyscallVectorisedPacketWriter{writer, w}, true
 	}
 	return nil, false
 }
@@ -111,7 +111,6 @@ var _ N.VectorisedWriter = (*SyscallVectorisedWriter)(nil)
 type SyscallVectorisedWriter struct {
 	upstream any
 	rawConn  syscall.RawConn
-	syscallVectorisedWriterFields
 }
 
 func (w *SyscallVectorisedWriter) Upstream() any {
@@ -127,7 +126,6 @@ var _ N.VectorisedPacketWriter = (*SyscallVectorisedPacketWriter)(nil)
 type SyscallVectorisedPacketWriter struct {
 	upstream any
 	rawConn  syscall.RawConn
-	syscallVectorisedWriterFields
 }
 
 func (w *SyscallVectorisedPacketWriter) Upstream() any {

@@ -7,17 +7,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func bindToInterface(conn syscall.RawConn, network string, address string, finder InterfaceFinder, interfaceName string, interfaceIndex int, preferInterfaceName bool) error {
+func bindToInterface(conn syscall.RawConn, network string, address string, finder InterfaceFinder, interfaceName string, interfaceIndex int) error {
 	return Raw(conn, func(fd uintptr) error {
+		var err error
 		if interfaceIndex == -1 {
 			if finder == nil {
 				return os.ErrInvalid
 			}
-			iif, err := finder.ByName(interfaceName)
+			interfaceIndex, err = finder.InterfaceIndexByName(interfaceName)
 			if err != nil {
 				return err
 			}
-			interfaceIndex = iif.Index
 		}
 		switch network {
 		case "tcp6", "udp6":

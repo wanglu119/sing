@@ -1,7 +1,6 @@
 package deadline
 
 import (
-	"os"
 	"time"
 
 	"github.com/sagernet/sing/common/atomic"
@@ -24,15 +23,12 @@ func (r *fallbackReader) Read(p []byte) (n int, err error) {
 		return r.pipeReturn(result, p)
 	default:
 	}
+	if r.disablePipe.Load() {
+		return r.ExtendedReader.Read(p)
+	}
 	select {
-	case result := <-r.result:
-		return r.pipeReturn(result, p)
-	case <-r.pipeDeadline.wait():
-		return 0, os.ErrDeadlineExceeded
 	case <-r.done:
-		if r.disablePipe.Load() {
-			return r.ExtendedReader.Read(p)
-		} else if r.deadline.Load().IsZero() {
+		if r.deadline.Load().IsZero() {
 			r.done <- struct{}{}
 			r.inRead.Store(true)
 			defer r.inRead.Store(false)
@@ -40,13 +36,9 @@ func (r *fallbackReader) Read(p []byte) (n int, err error) {
 			return
 		}
 		go r.pipeRead(len(p))
+	default:
 	}
-	select {
-	case result := <-r.result:
-		return r.pipeReturn(result, p)
-	case <-r.pipeDeadline.wait():
-		return 0, os.ErrDeadlineExceeded
-	}
+	return r.reader.read(p)
 }
 
 func (r *fallbackReader) ReadBuffer(buffer *buf.Buffer) error {
@@ -55,28 +47,21 @@ func (r *fallbackReader) ReadBuffer(buffer *buf.Buffer) error {
 		return r.pipeReturnBuffer(result, buffer)
 	default:
 	}
+	if r.disablePipe.Load() {
+		return r.ExtendedReader.ReadBuffer(buffer)
+	}
 	select {
-	case result := <-r.result:
-		return r.pipeReturnBuffer(result, buffer)
-	case <-r.pipeDeadline.wait():
-		return os.ErrDeadlineExceeded
 	case <-r.done:
-		if r.disablePipe.Load() {
-			return r.ExtendedReader.ReadBuffer(buffer)
-		} else if r.deadline.Load().IsZero() {
+		if r.deadline.Load().IsZero() {
 			r.done <- struct{}{}
 			r.inRead.Store(true)
 			defer r.inRead.Store(false)
 			return r.ExtendedReader.ReadBuffer(buffer)
 		}
-		go r.pipeRead(buffer.FreeLen())
+		go r.pipeReadBuffer(buffer.FreeLen())
+	default:
 	}
-	select {
-	case result := <-r.result:
-		return r.pipeReturnBuffer(result, buffer)
-	case <-r.pipeDeadline.wait():
-		return os.ErrDeadlineExceeded
-	}
+	return r.readBuffer(buffer)
 }
 
 func (r *fallbackReader) SetReadDeadline(t time.Time) error {

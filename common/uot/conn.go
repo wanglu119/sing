@@ -13,17 +13,11 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-var (
-	_ N.NetPacketConn    = (*Conn)(nil)
-	_ N.PacketReadWaiter = (*Conn)(nil)
-)
-
 type Conn struct {
 	net.Conn
-	isConnect       bool
-	destination     M.Socksaddr
-	writer          N.VectorisedWriter
-	readWaitOptions N.ReadWaitOptions
+	isConnect   bool
+	destination M.Socksaddr
+	writer      N.VectorisedWriter
 }
 
 func NewConn(conn net.Conn, request Request) *Conn {

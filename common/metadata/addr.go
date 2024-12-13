@@ -141,7 +141,7 @@ func SocksaddrFromNet(ap net.Addr) Socksaddr {
 	return ParseSocksaddr(ap.String())
 }
 
-func AddrFromNet(netAddr net.Addr) netip.Addr {
+func AddrFromNetAddr(netAddr net.Addr) netip.Addr {
 	if addr := AddrPortFromNet(netAddr); addr.Addr().IsValid() {
 		return addr.Addr()
 	}
@@ -154,16 +154,6 @@ func AddrFromNet(netAddr net.Addr) netip.Addr {
 		return AddrFromIP(addr.IP)
 	default:
 		return netip.Addr{}
-	}
-}
-
-func PrefixFromNet(netAddr net.Addr) netip.Prefix {
-	switch addr := netAddr.(type) {
-	case *net.IPNet:
-		bits, _ := addr.Mask.Size()
-		return netip.PrefixFrom(AddrFromIP(addr.IP).Unmap(), bits)
-	default:
-		return netip.Prefix{}
 	}
 }
 

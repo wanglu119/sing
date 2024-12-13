@@ -12,20 +12,20 @@ import (
 
 var ifIndexDisabled atomic.Bool
 
-func bindToInterface(conn syscall.RawConn, network string, address string, finder InterfaceFinder, interfaceName string, interfaceIndex int, preferInterfaceName bool) error {
+func bindToInterface(conn syscall.RawConn, network string, address string, finder InterfaceFinder, interfaceName string, interfaceIndex int) error {
 	return Raw(conn, func(fd uintptr) error {
-		if !preferInterfaceName && !ifIndexDisabled.Load() {
+		var err error
+		if !ifIndexDisabled.Load() {
 			if interfaceIndex == -1 {
-				if interfaceName == "" {
+				if finder == nil {
 					return os.ErrInvalid
 				}
-				iif, err := finder.ByName(interfaceName)
+				interfaceIndex, err = finder.InterfaceIndexByName(interfaceName)
 				if err != nil {
 					return err
 				}
-				interfaceIndex = iif.Index
 			}
-			err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_BINDTOIFINDEX, interfaceIndex)
+			err = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_BINDTOIFINDEX, interfaceIndex)
 			if err == nil {
 				return nil
 			} else if E.IsMulti(err, unix.ENOPROTOOPT, unix.EINVAL) {
@@ -35,7 +35,13 @@ func bindToInterface(conn syscall.RawConn, network string, address string, finde
 			}
 		}
 		if interfaceName == "" {
-			return os.ErrInvalid
+			if finder == nil {
+				return os.ErrInvalid
+			}
+			interfaceName, err = finder.InterfaceNameByIndex(interfaceIndex)
+			if err != nil {
+				return err
+			}
 		}
 		return unix.BindToDevice(int(fd), interfaceName)
 	})

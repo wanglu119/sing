@@ -6,10 +6,20 @@ import (
 	"github.com/sagernet/sing/common"
 )
 
-// Deprecated: wtf is this?
 var ZeroBytes = make([]byte, 1024)
 
-// Deprecated: wtf is this?
+func WriteByte(writer io.Writer, b byte) error {
+	return common.Error(writer.Write([]byte{b}))
+}
+
+func WriteBytes(writer io.Writer, b []byte) error {
+	return common.Error(writer.Write(b))
+}
+
+func WriteZero(writer io.Writer) error {
+	return WriteByte(writer, 0)
+}
+
 func WriteZeroN(writer io.Writer, size int) error {
 	var index int
 	for index < size {
@@ -28,22 +38,6 @@ func WriteZeroN(writer io.Writer, size int) error {
 	return nil
 }
 
-// Deprecated: wtf is this?
-func WriteByte(writer io.Writer, b byte) error {
-	return common.Error(writer.Write([]byte{b}))
-}
-
-// Deprecated: wtf is this?
-func WriteBytes(writer io.Writer, b []byte) error {
-	return common.Error(writer.Write(b))
-}
-
-// Deprecated: wtf is this?
-func WriteZero(writer io.Writer) error {
-	return WriteByte(writer, 0)
-}
-
-// Deprecated: wtf is this?
 func WriteString(writer io.Writer, str string) error {
 	return WriteBytes(writer, []byte(str))
 }

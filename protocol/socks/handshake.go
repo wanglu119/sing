@@ -1,7 +1,6 @@
 package socks
 
 import (
-	std_bufio "bufio"
 	"context"
 	"io"
 	"net"
@@ -10,18 +9,17 @@ import (
 
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/auth"
-	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/common/varbin"
+	"github.com/sagernet/sing/common/rw"
 	"github.com/sagernet/sing/protocol/socks/socks4"
 	"github.com/sagernet/sing/protocol/socks/socks5"
 )
 
-type HandlerEx interface {
-	N.TCPConnectionHandlerEx
-	N.UDPConnectionHandlerEx
+type Handler interface {
+	N.TCPConnectionHandler
+	N.UDPConnectionHandler
 }
 
 func ClientHandshake4(conn io.ReadWriter, command byte, destination M.Socksaddr, username string) (socks4.Response, error) {
@@ -33,7 +31,7 @@ func ClientHandshake4(conn io.ReadWriter, command byte, destination M.Socksaddr,
 	if err != nil {
 		return socks4.Response{}, err
 	}
-	response, err := socks4.ReadResponse(varbin.StubReader(conn))
+	response, err := socks4.ReadResponse(conn)
 	if err != nil {
 		return socks4.Response{}, err
 	}
@@ -44,7 +42,6 @@ func ClientHandshake4(conn io.ReadWriter, command byte, destination M.Socksaddr,
 }
 
 func ClientHandshake5(conn io.ReadWriter, command byte, destination M.Socksaddr, username string, password string) (socks5.Response, error) {
-	reader := varbin.StubReader(conn)
 	var method byte
 	if username == "" {
 		method = socks5.AuthTypeNotRequired
@@ -57,7 +54,7 @@ func ClientHandshake5(conn io.ReadWriter, command byte, destination M.Socksaddr,
 	if err != nil {
 		return socks5.Response{}, err
 	}
-	authResponse, err := socks5.ReadAuthResponse(reader)
+	authResponse, err := socks5.ReadAuthResponse(conn)
 	if err != nil {
 		return socks5.Response{}, err
 	}
@@ -69,7 +66,7 @@ func ClientHandshake5(conn io.ReadWriter, command byte, destination M.Socksaddr,
 		if err != nil {
 			return socks5.Response{}, err
 		}
-		usernamePasswordResponse, err := socks5.ReadUsernamePasswordAuthResponse(reader)
+		usernamePasswordResponse, err := socks5.ReadUsernamePasswordAuthResponse(conn)
 		if err != nil {
 			return socks5.Response{}, err
 		}
@@ -79,26 +76,6 @@ func ClientHandshake5(conn io.ReadWriter, command byte, destination M.Socksaddr,
 	} else if authResponse.Method != socks5.AuthTypeNotRequired {
 		return socks5.Response{}, E.New("socks5: unsupported auth method: ", authResponse.Method)
 	}
-
-	if command == socks5.CommandUDPAssociate {
-		if destination.Addr.IsPrivate() {
-			if destination.Addr.Is6() {
-				destination.Addr = netip.AddrFrom4([4]byte{127, 0, 0, 1})
-			} else {
-				destination.Addr = netip.IPv6Loopback()
-			}
-		} else if destination.Addr.IsGlobalUnicast() {
-			if destination.Addr.Is6() {
-				destination.Addr = netip.IPv6Unspecified()
-			} else {
-				destination.Addr = netip.IPv4Unspecified()
-			}
-		} else {
-			destination.Addr = netip.IPv6Unspecified()
-		}
-		destination.Port = 0
-	}
-
 	err = socks5.WriteRequest(conn, socks5.Request{
 		Command:     command,
 		Destination: destination,
@@ -106,7 +83,7 @@ func ClientHandshake5(conn io.ReadWriter, command byte, destination M.Socksaddr,
 	if err != nil {
 		return socks5.Response{}, err
 	}
-	response, err := socks5.ReadResponse(reader)
+	response, err := socks5.ReadResponse(conn)
 	if err != nil {
 		return socks5.Response{}, err
 	}
@@ -116,21 +93,18 @@ func ClientHandshake5(conn io.ReadWriter, command byte, destination M.Socksaddr,
 	return response, err
 }
 
-func HandleConnectionEx(
-	ctx context.Context, conn net.Conn, reader *std_bufio.Reader,
-	authenticator *auth.Authenticator,
-	handler HandlerEx,
-	source M.Socksaddr,
-	onClose N.CloseHandlerFunc,
-) error {
-	version, err := reader.ReadByte()
+func HandleConnection(ctx context.Context, conn net.Conn, authenticator auth.Authenticator, handler Handler, metadata M.Metadata) error {
+	version, err := rw.ReadByte(conn)
 	if err != nil {
 		return err
 	}
+	return HandleConnection0(ctx, conn, version, authenticator, handler, metadata)
+}
+
+func HandleConnection0(ctx context.Context, conn net.Conn, version byte, authenticator auth.Authenticator, handler Handler, metadata M.Metadata) error {
 	switch version {
 	case socks4.Version:
-		var request socks4.Request
-		request, err = socks4.ReadRequest0(reader)
+		request, err := socks4.ReadRequest0(conn)
 		if err != nil {
 			return err
 		}
@@ -138,18 +112,28 @@ func HandleConnectionEx(
 		case socks4.CommandConnect:
 			if authenticator != nil && !authenticator.Verify(request.Username, "") {
 				err = socks4.WriteResponse(conn, socks4.Response{
-					ReplyCode: socks4.ReplyCodeRejectedOrFailed,
+					ReplyCode:   socks4.ReplyCodeRejectedOrFailed,
+					Destination: request.Destination,
 				})
 				if err != nil {
 					return err
 				}
 				return E.New("socks4: authentication failed, username=", request.Username)
 			}
-			handler.NewConnectionEx(auth.ContextWithUser(ctx, request.Username), NewLazyConn(conn, version), source, request.Destination, onClose)
-			return nil
+			err = socks4.WriteResponse(conn, socks4.Response{
+				ReplyCode:   socks4.ReplyCodeGranted,
+				Destination: M.SocksaddrFromNet(conn.LocalAddr()),
+			})
+			if err != nil {
+				return err
+			}
+			metadata.Protocol = "socks4"
+			metadata.Destination = request.Destination
+			return handler.NewConnection(auth.ContextWithUser(ctx, request.Username), conn, metadata)
 		default:
 			err = socks4.WriteResponse(conn, socks4.Response{
-				ReplyCode: socks4.ReplyCodeRejectedOrFailed,
+				ReplyCode:   socks4.ReplyCodeRejectedOrFailed,
+				Destination: request.Destination,
 			})
 			if err != nil {
 				return err
@@ -157,8 +141,7 @@ func HandleConnectionEx(
 			return E.New("socks4: unsupported command ", request.Command)
 		}
 	case socks5.Version:
-		var authRequest socks5.AuthRequest
-		authRequest, err = socks5.ReadAuthRequest0(reader)
+		authRequest, err := socks5.ReadAuthRequest0(conn)
 		if err != nil {
 			return err
 		}
@@ -183,8 +166,7 @@ func HandleConnectionEx(
 			return err
 		}
 		if authMethod == socks5.AuthTypeUsernamePassword {
-			var usernamePasswordAuthRequest socks5.UsernamePasswordAuthRequest
-			usernamePasswordAuthRequest, err = socks5.ReadUsernamePasswordAuthRequest(reader)
+			usernamePasswordAuthRequest, err := socks5.ReadUsernamePasswordAuthRequest(conn)
 			if err != nil {
 				return err
 			}
@@ -203,22 +185,49 @@ func HandleConnectionEx(
 				return E.New("socks5: authentication failed, username=", usernamePasswordAuthRequest.Username, ", password=", usernamePasswordAuthRequest.Password)
 			}
 		}
-		var request socks5.Request
-		request, err = socks5.ReadRequest(reader)
+		request, err := socks5.ReadRequest(conn)
 		if err != nil {
 			return err
 		}
 		switch request.Command {
 		case socks5.CommandConnect:
-			handler.NewConnectionEx(ctx, NewLazyConn(conn, version), source, request.Destination, onClose)
-			return nil
-		case socks5.CommandUDPAssociate:
-			var udpConn *net.UDPConn
-			udpConn, err = net.ListenUDP(M.NetworkFromNetAddr("udp", M.AddrFromNet(conn.LocalAddr())), net.UDPAddrFromAddrPort(netip.AddrPortFrom(M.AddrFromNet(conn.LocalAddr()), 0)))
+			err = socks5.WriteResponse(conn, socks5.Response{
+				ReplyCode: socks5.ReplyCodeSuccess,
+				Bind:      M.SocksaddrFromNet(conn.LocalAddr()),
+			})
 			if err != nil {
 				return err
 			}
-			handler.NewPacketConnectionEx(ctx, NewLazyAssociatePacketConn(bufio.NewServerPacketConn(udpConn), conn), source, M.Socksaddr{}, onClose)
+			metadata.Protocol = "socks5"
+			metadata.Destination = request.Destination
+			return handler.NewConnection(ctx, conn, metadata)
+		case socks5.CommandUDPAssociate:
+			var udpConn *net.UDPConn
+			udpConn, err = net.ListenUDP(M.NetworkFromNetAddr("udp", M.AddrFromNetAddr(conn.LocalAddr())), net.UDPAddrFromAddrPort(netip.AddrPortFrom(M.AddrFromNetAddr(conn.LocalAddr()), 0)))
+			if err != nil {
+				return err
+			}
+			defer udpConn.Close()
+			err = socks5.WriteResponse(conn, socks5.Response{
+				ReplyCode: socks5.ReplyCodeSuccess,
+				Bind:      M.SocksaddrFromNet(udpConn.LocalAddr()),
+			})
+			if err != nil {
+				return err
+			}
+			metadata.Protocol = "socks5"
+			metadata.Destination = request.Destination
+			var innerError error
+			done := make(chan struct{})
+			associatePacketConn := NewAssociatePacketConn(udpConn, request.Destination, conn)
+			go func() {
+				innerError = handler.NewPacketConnection(ctx, associatePacketConn, metadata)
+				close(done)
+			}()
+			err = common.Error(io.Copy(io.Discard, conn))
+			associatePacketConn.Close()
+			<-done
+			return E.Errors(innerError, err)
 		default:
 			err = socks5.WriteResponse(conn, socks5.Response{
 				ReplyCode: socks5.ReplyCodeUnsupported,

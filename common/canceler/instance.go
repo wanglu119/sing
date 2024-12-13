@@ -41,9 +41,9 @@ func (i *Instance) Timeout() time.Duration {
 	return i.timeout
 }
 
-func (i *Instance) SetTimeout(timeout time.Duration) bool {
+func (i *Instance) SetTimeout(timeout time.Duration) {
 	i.timeout = timeout
-	return i.Update()
+	i.Update()
 }
 
 func (i *Instance) wait() {

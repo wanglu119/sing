@@ -23,7 +23,6 @@ type Group struct {
 	tasks    []taskItem
 	cleanup  func()
 	fastFail bool
-	queue    chan struct{}
 }
 
 func (g *Group) Append(name string, f func(ctx context.Context) error) {
@@ -47,39 +46,25 @@ func (g *Group) FastFail() {
 	g.fastFail = true
 }
 
-func (g *Group) Concurrency(n int) {
-	g.queue = make(chan struct{}, n)
-	for i := 0; i < n; i++ {
-		g.queue <- struct{}{}
-	}
+func (g *Group) Run(contextList ...context.Context) error {
+	return g.RunContextList(contextList)
 }
 
-func (g *Group) Run(ctx context.Context) error {
+func (g *Group) RunContextList(contextList []context.Context) error {
+	if len(contextList) == 0 {
+		contextList = append(contextList, context.Background())
+	}
+
 	taskContext, taskFinish := common.ContextWithCancelCause(context.Background())
-	taskCancelContext, taskCancel := common.ContextWithCancelCause(ctx)
+	taskCancelContext, taskCancel := common.ContextWithCancelCause(context.Background())
 
 	var errorAccess sync.Mutex
 	var returnError error
-	taskCount := len(g.tasks)
+	taskCount := int8(len(g.tasks))
 
 	for _, task := range g.tasks {
 		currentTask := task
 		go func() {
-			if g.queue != nil {
-				select {
-				case <-taskCancelContext.Done():
-					errorAccess.Lock()
-					taskCount--
-					currentCount := taskCount
-					if currentCount == 0 {
-						taskCancel(errTaskSucceed{})
-						taskFinish(errTaskSucceed{})
-					}
-					errorAccess.Unlock()
-					return
-				case <-g.queue:
-				}
-			}
 			err := currentTask.Run(taskCancelContext)
 			errorAccess.Lock()
 			if err != nil {
@@ -98,18 +83,13 @@ func (g *Group) Run(ctx context.Context) error {
 				taskCancel(errTaskSucceed{})
 				taskFinish(errTaskSucceed{})
 			}
-			if g.queue != nil {
-				g.queue <- struct{}{}
-			}
 		}()
 	}
 
-	var upstreamErr bool
-	select {
-	case <-taskCancelContext.Done():
-	case <-ctx.Done():
-		upstreamErr = true
-		taskCancel(ctx.Err())
+	selectedContext, upstreamErr := common.SelectContext(append([]context.Context{taskCancelContext}, contextList...))
+
+	if selectedContext != 0 {
+		taskCancel(upstreamErr)
 	}
 
 	if g.cleanup != nil {
@@ -118,8 +98,10 @@ func (g *Group) Run(ctx context.Context) error {
 
 	<-taskContext.Done()
 
-	if upstreamErr {
-		return ctx.Err()
+	if selectedContext != 0 {
+		returnError = E.Append(returnError, upstreamErr, func(err error) error {
+			return E.Cause(err, "upstream")
+		})
 	}
 
 	return returnError

@@ -2,7 +2,6 @@ package canceler
 
 import (
 	"context"
-	"net"
 	"time"
 
 	"github.com/sagernet/sing/common"
@@ -32,7 +31,7 @@ func (c *TimeoutPacketConn) ReadPacket(buffer *buf.Buffer) (destination M.Socksa
 	for {
 		err = c.PacketConn.SetReadDeadline(time.Now().Add(c.timeout))
 		if err != nil {
-			return
+			return M.Socksaddr{}, err
 		}
 		destination, err = c.PacketConn.ReadPacket(buffer)
 		if err == nil {
@@ -44,7 +43,7 @@ func (c *TimeoutPacketConn) ReadPacket(buffer *buf.Buffer) (destination M.Socksa
 				return
 			}
 		} else {
-			return
+			return M.Socksaddr{}, err
 		}
 	}
 }
@@ -61,13 +60,12 @@ func (c *TimeoutPacketConn) Timeout() time.Duration {
 	return c.timeout
 }
 
-func (c *TimeoutPacketConn) SetTimeout(timeout time.Duration) bool {
+func (c *TimeoutPacketConn) SetTimeout(timeout time.Duration) {
 	c.timeout = timeout
-	return c.PacketConn.SetReadDeadline(time.Now()) == nil
+	c.PacketConn.SetReadDeadline(time.Now())
 }
 
 func (c *TimeoutPacketConn) Close() error {
-	c.cancel(net.ErrClosed)
 	return c.PacketConn.Close()
 }
 

@@ -12,7 +12,6 @@ import (
 	F "github.com/sagernet/sing/common/format"
 )
 
-// Deprecated: wtf is this?
 type Handler interface {
 	NewError(ctx context.Context, err error)
 }
@@ -40,7 +39,7 @@ func Extend(cause error, message ...any) error {
 }
 
 func IsClosedOrCanceled(err error) bool {
-	return IsMulti(err, io.EOF, net.ErrClosed, io.ErrClosedPipe, os.ErrClosed, syscall.EPIPE, syscall.ECONNRESET, context.Canceled, context.DeadlineExceeded) || IsTimeout(err)
+	return IsMulti(err, io.EOF, net.ErrClosed, io.ErrClosedPipe, os.ErrClosed, syscall.EPIPE, syscall.ECONNRESET, context.Canceled, context.DeadlineExceeded)
 }
 
 func IsClosed(err error) bool {

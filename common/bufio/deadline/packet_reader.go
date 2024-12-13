@@ -52,13 +52,14 @@ func (r *packetReader) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	default:
 	}
 	select {
-	case result := <-r.result:
-		return r.pipeReturnFrom(result, p)
-	case <-r.pipeDeadline.wait():
-		return 0, nil, os.ErrDeadlineExceeded
 	case <-r.done:
 		go r.pipeReadFrom(len(p))
+	default:
 	}
+	return r.readFrom(p)
+}
+
+func (r *packetReader) readFrom(p []byte) (n int, addr net.Addr, err error) {
 	select {
 	case result := <-r.result:
 		return r.pipeReturnFrom(result, p)
@@ -105,13 +106,14 @@ func (r *packetReader) ReadPacket(buffer *buf.Buffer) (destination M.Socksaddr, 
 	default:
 	}
 	select {
-	case result := <-r.result:
-		return r.pipeReturnFromBuffer(result, buffer)
-	case <-r.pipeDeadline.wait():
-		return M.Socksaddr{}, os.ErrDeadlineExceeded
 	case <-r.done:
-		go r.pipeReadFrom(buffer.FreeLen())
+		go r.pipeReadFromBuffer(buffer.FreeLen())
+	default:
 	}
+	return r.readPacket(buffer)
+}
+
+func (r *packetReader) readPacket(buffer *buf.Buffer) (destination M.Socksaddr, err error) {
 	select {
 	case result := <-r.result:
 		return r.pipeReturnFromBuffer(result, buffer)
@@ -130,6 +132,17 @@ func (r *packetReader) pipeReturnFromBuffer(result *packetReadResult, buffer *bu
 		result.buffer.Release()
 		return result.destination, result.err
 	}
+}
+
+func (r *packetReader) pipeReadFromBuffer(pLen int) {
+	buffer := buf.NewSize(pLen)
+	destination, err := r.TimeoutPacketReader.ReadPacket(buffer)
+	r.result <- &packetReadResult{
+		buffer:      buffer,
+		destination: destination,
+		err:         err,
+	}
+	r.done <- struct{}{}
 }
 
 func (r *packetReader) SetReadDeadline(t time.Time) error {
